@@ -1,14 +1,15 @@
 #include <unicorn/unicorn.h>
 
-#include "unicornlua/lua.h"
-#include "unicornlua/utils.h"
+#include "unicornlua/lua.hpp"
+#include "unicornlua/utils.hpp"
 
-int ul_crash_on_error(lua_State* L, uc_err error)
+void ul_crash_on_error(lua_State* L, uc_err error)
 {
     const char* message = uc_strerror(error);
     lua_checkstack(L, 1);
     lua_pushstring(L, message);
-    return lua_error(L);
+    lua_error(L);
+    UL_UNREACHABLE_MARKER;
 }
 
 void ul_create_weak_table(lua_State* L, const char* mode)

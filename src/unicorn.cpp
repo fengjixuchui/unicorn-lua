@@ -1,10 +1,10 @@
 #include <unicorn/unicorn.h>
 
-#include "unicornlua/context.h"
-#include "unicornlua/engine.h"
-#include "unicornlua/lua.h"
-#include "unicornlua/unicornlua.h"
-#include "unicornlua/utils.h"
+#include "unicornlua/context.hpp"
+#include "unicornlua/engine.hpp"
+#include "unicornlua/lua.hpp"
+#include "unicornlua/unicornlua.hpp"
+#include "unicornlua/utils.hpp"
 
 static int ul_unicorn_version(lua_State* L)
 {
@@ -35,8 +35,18 @@ static int ul_create_unicornlua_version_table(lua_State* L)
 
 static int ul_arch_supported(lua_State* L)
 {
-    auto architecture = static_cast<uc_arch>(luaL_checkinteger(L, -1));
-    lua_pushboolean(L, uc_arch_supported(architecture));
+    int is_supported = 0;
+
+    // If the architecture is nil, return false. This allows code to easily
+    // determine if an architecture is supported without needing to check the
+    // Unicorn version AND assume that the Unicorn library was compiled with all
+    // available architectures.
+    if (!lua_isnil(L, 1)) {
+        auto architecture = static_cast<uc_arch>(luaL_checkinteger(L, 1));
+        is_supported = uc_arch_supported(architecture) ? 1 : 0;
+    }
+
+    lua_pushboolean(L, is_supported);
     return 1;
 }
 
@@ -48,13 +58,13 @@ static int ul_open(lua_State* L)
     uc_engine* engine;
     uc_err error = uc_open(architecture, mode, &engine);
     if (error != UC_ERR_OK)
-        return ul_crash_on_error(L, error);
+        ul_crash_on_error(L, error);
 
     // Create a block of memory for the engine userdata and then create the
     // UCLuaEngine in there using placement new. This way, Lua controls the
     // memory and will call the destructor when the engine gets
     // garbage-collected, and we won't have to manage it ourselves.
-    auto udata = lua_newuserdata(L, sizeof(UCLuaEngine));
+    void *udata = lua_newuserdata(L, sizeof(UCLuaEngine));
     new (udata) UCLuaEngine(L, engine);
 
     luaL_setmetatable(L, kEngineMetatableName);
@@ -77,7 +87,7 @@ static int ul_strerror(lua_State* L)
     return 1;
 }
 
-static const luaL_Reg kUnicornLibraryFunctions[]
+static constexpr luaL_Reg kUnicornLibraryFunctions[]
     = { { "arch_supported", ul_arch_supported }, { "open", ul_open },
           { "strerror", ul_strerror }, { "version", ul_unicorn_version },
           { nullptr, nullptr } };
@@ -88,7 +98,7 @@ extern "C" UNICORN_EXPORT int luaopen_unicorn(lua_State* L)
     // context instances use.
     ul_init_engines_lib(L);
 
-    // Create the main library table with all of the global functions in it.
+    // Create the main library table with all the global functions in it.
     luaL_newlib(L, kUnicornLibraryFunctions);
 
     // Create a table in the library that contains the major, minor, and patch

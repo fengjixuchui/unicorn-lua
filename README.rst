@@ -1,13 +1,13 @@
-unicorn-lua
-===========
+Unicorn CPU Emulator for Lua
+============================
 
 |build-status| |lua-versions| |platforms|
 
-.. |build-status| image:: https://travis-ci.com/dargueta/unicorn-lua.svg?branch=master
+.. |build-status| image:: https://github.com/dargueta/unicorn-lua/actions/workflows/ci.yml/badge.svg
    :alt: Build status
-   :target: https://travis-ci.com/dargueta/unicorn-lua
+   :target: https://github.com/dargueta/unicorn-lua/actions/workflows/ci.yml
 
-.. |lua-versions| image:: https://img.shields.io/badge/lua-5.1%20%7C%205.2%20%7C%205.3%20%7C%205.4%20%7C%20LuaJIT2.0-blue
+.. |lua-versions| image:: https://img.shields.io/badge/lua-5.1%20%7C%205.2%20%7C%205.3%20%7C%205.4%20%7C%20LuaJIT2.0%20%7C%20LuaJIT2.1-blue
    :alt: Lua versions
    :target: https://www.lua.org
 
@@ -16,8 +16,8 @@ unicorn-lua
 
 Lua bindings for the `Unicorn CPU Emulator`_.
 
-I'm currently testing this on vanilla Lua 5.1 - 5.4, and LuaJIT 2.0 on both Linux
-and OSX.
+I'm currently testing this on vanilla Lua 5.1 - 5.4, LuaJIT 2.0, and LuaJIT 2.1 on
+both Linux and MacOS.
 
 License Change
 --------------
@@ -181,7 +181,7 @@ before using.
 * A C++ compiler supporting the C++11 standard or later. Supported compilers include
   GCC 4.1+ and GCC-compatible compilers like Clang.
 * The `Unicorn CPU Emulator`_ library must be installed in your system's standard
-  library location. Currently only Unicorn 1.x is supported.
+  library location. Versions 1 and 2 are supported.
 * You must also have the Unicorn headers installed.
 * Some examples have additional dependencies; see their READMEs for details.
 

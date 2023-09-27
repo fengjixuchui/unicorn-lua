@@ -1,11 +1,13 @@
-#include <unicorn/unicorn.h>
-#include <unicorn/x86.h>
+#include <cstdint>
 
-#include "unicornlua/engine.h"
-#include "unicornlua/errors.h"
-#include "unicornlua/hooks.h"
-#include "unicornlua/lua.h"
-#include "unicornlua/utils.h"
+#include <unicorn/unicorn.h>
+
+#include "unicornlua/engine.hpp"
+#include "unicornlua/errors.hpp"
+#include "unicornlua/hooks.hpp"
+#include "unicornlua/lua.hpp"
+#include "unicornlua/transaction.hpp"
+#include "unicornlua/utils.hpp"
 
 Hook::Hook(lua_State* L, uc_engine* engine)
     : L_(L)
@@ -94,10 +96,11 @@ static void get_callback(Hook* hook)
 {
     lua_State* L = hook->L();
     hook->push_callback();
-    if (lua_isnil(L, -1))
+    if (lua_isnil(L, -1)) {
         luaL_error(L,
             "No callback function found for hook %p attached to engine %p",
             hook, hook->engine());
+    }
 }
 
 /* The C wrapper for a code execution hook. */
@@ -111,7 +114,7 @@ static void code_hook(
     get_callback(hook);
 
     /* Push the arguments */
-    ul_get_engine_object(L, uc);
+    ul_find_lua_engine(L, uc);
     lua_pushinteger(L, static_cast<lua_Integer>(address));
     lua_pushinteger(L, static_cast<lua_Integer>(size));
     hook->push_user_data();
@@ -127,7 +130,7 @@ static void interrupt_hook(uc_engine* uc, uint32_t intno, void* user_data)
     get_callback(hook);
 
     /* Push the arguments */
-    ul_get_engine_object(L, uc);
+    ul_find_lua_engine(L, uc);
     lua_pushinteger(L, static_cast<lua_Integer>(intno));
     hook->push_user_data();
     lua_call(L, 3, 0);
@@ -143,7 +146,7 @@ static uint32_t port_in_hook(
     get_callback(hook);
 
     /* Push the arguments */
-    ul_get_engine_object(L, uc);
+    ul_find_lua_engine(L, uc);
     lua_pushinteger(L, static_cast<lua_Integer>(port));
     lua_pushinteger(L, static_cast<lua_Integer>(size));
     hook->push_user_data();
@@ -165,7 +168,7 @@ static void port_out_hook(
     get_callback(hook);
 
     /* Push the arguments */
-    ul_get_engine_object(L, uc);
+    ul_find_lua_engine(L, uc);
     lua_pushinteger(L, static_cast<lua_Integer>(port));
     lua_pushinteger(L, static_cast<lua_Integer>(size));
     lua_pushinteger(L, static_cast<lua_Integer>(value));
@@ -183,7 +186,7 @@ static void memory_access_hook(uc_engine* uc, uc_mem_type type,
     get_callback(hook);
 
     /* Push the arguments */
-    ul_get_engine_object(L, uc);
+    ul_find_lua_engine(L, uc);
     lua_pushinteger(L, (lua_Integer)type);
     lua_pushinteger(L, static_cast<lua_Integer>(address));
     lua_pushinteger(L, static_cast<lua_Integer>(size));
@@ -202,7 +205,7 @@ static bool invalid_mem_access_hook(uc_engine* uc, uc_mem_type type,
     get_callback(hook);
 
     /* Push the arguments */
-    ul_get_engine_object(L, uc);
+    ul_find_lua_engine(L, uc);
     lua_pushinteger(L, static_cast<lua_Integer>(type));
     lua_pushinteger(L, static_cast<lua_Integer>(address));
     lua_pushinteger(L, static_cast<lua_Integer>(size));
@@ -213,8 +216,7 @@ static bool invalid_mem_access_hook(uc_engine* uc, uc_mem_type type,
     if (lua_type(L, -1) != LUA_TBOOLEAN) {
         luaL_error(L,
             "Error: Handler for invalid memory accesses must return a boolean, "
-            "got a %s"
-            " instead.",
+            "got a %s instead.",
             lua_typename(L, -1));
         // Technically this is unreachable because luaL_error calls longjmp().
         // The header doesn't declare this, however, so we have no way of
@@ -225,6 +227,112 @@ static bool invalid_mem_access_hook(uc_engine* uc, uc_mem_type type,
     lua_pop(L, 1);
     return return_value != 0;
 }
+
+static void generic_hook_with_no_arguments(uc_engine* uc, void* user_data)
+{
+    auto hook = reinterpret_cast<Hook*>(user_data);
+    lua_State* L = hook->L();
+
+    ul_find_lua_engine(L, uc);
+    hook->push_user_data();
+    lua_call(L, 2, 0);
+}
+
+#if UC_API_MAJOR >= 2
+static bool cpuid_hook(uc_engine* uc, void* user_data)
+{
+    auto hook = reinterpret_cast<Hook*>(user_data);
+    lua_State* L = hook->L();
+
+    ul_find_lua_engine(L, uc);
+    hook->push_user_data();
+
+    lua_call(L, 2, 1);
+
+    // TOS is a boolean indicating if the instruction was skipped. This follows
+    // the same rules as Lua, i.e. only `false` and `nil` are considered falsy.
+    int result = lua_toboolean(L, -1);
+    lua_pop(L, 1);
+    return result != 0;
+}
+
+static void edge_generated_hook(
+    uc_engine* uc, uc_tb* cur_tb, uc_tb* prev_tb, void* user_data)
+{
+    auto hook = reinterpret_cast<Hook*>(user_data);
+    lua_State* L = hook->L();
+
+    // Push the callback function onto the stack.
+    get_callback(hook);
+
+    // Push the arguments
+    ul_find_lua_engine(L, uc);
+    create_table_from_transaction_block(L, cur_tb);
+    create_table_from_transaction_block(L, prev_tb);
+    hook->push_user_data();
+
+    lua_call(L, 4, 0);
+}
+
+static void tcg_opcode_hook(uc_engine* uc, uint64_t address, uint64_t arg1,
+    uint64_t arg2, uint32_t size, void* user_data)
+{
+    auto hook = reinterpret_cast<Hook*>(user_data);
+    lua_State* L = hook->L();
+
+    // Push the callback function onto the stack.
+    get_callback(hook);
+
+    // Push the arguments
+    ul_find_lua_engine(L, uc);
+    lua_pushinteger(L, static_cast<lua_Integer>(address));
+    lua_pushinteger(L, static_cast<lua_Integer>(arg1));
+    lua_pushinteger(L, static_cast<lua_Integer>(arg2));
+    lua_pushinteger(L, static_cast<lua_Integer>(size));
+    hook->push_user_data();
+
+    lua_call(L, 7, 0);
+}
+
+static void arm64_cp_reg_to_lua_table(lua_State* L, const uc_arm64_cp_reg* reg)
+{
+    lua_createtable(L, 0, 6);
+    lua_pushinteger(L, reg->crn);
+    lua_setfield(L, -1, "crn");
+    lua_pushinteger(L, reg->crm);
+    lua_setfield(L, -1, "crm");
+    lua_pushinteger(L, reg->op0);
+    lua_setfield(L, -1, "op0");
+    lua_pushinteger(L, reg->op1);
+    lua_setfield(L, -1, "op1");
+    lua_pushinteger(L, reg->op2);
+    lua_setfield(L, -1, "op2");
+    lua_pushinteger(L, reg->val);
+    lua_setfield(L, -1, "val");
+}
+
+static uint32_t arm64_sys_hook(uc_engine* uc, uc_arm64_reg reg,
+    const uc_arm64_cp_reg* cp_reg, void* user_data)
+{
+    auto hook = reinterpret_cast<Hook*>(user_data);
+    lua_State* L = hook->L();
+
+    // Push the callback function onto the stack.
+    get_callback(hook);
+
+    // Push the arguments
+    ul_find_lua_engine(L, uc);
+    lua_pushinteger(L, static_cast<lua_Integer>(reg));
+    arm64_cp_reg_to_lua_table(L, cp_reg);
+    hook->push_user_data();
+
+    lua_call(L, 3, 1);
+
+    int result = lua_toboolean(L, -1);
+    return result ? 1 : 0;
+}
+
+#endif // UC_API_MAJOR >= 2
 
 static void* get_c_callback_for_hook_type(int hook_type, int insn_code)
 {
@@ -237,12 +345,26 @@ static void* get_c_callback_for_hook_type(int hook_type, int insn_code)
         return (void*)code_hook;
 
     case UC_HOOK_INSN:
-        /* TODO (dargueta): Support other architectures beside X86. */
-        if (insn_code == UC_X86_INS_IN)
-            return (void*)port_in_hook;
-        else if (insn_code == UC_X86_INS_OUT)
-            return (void*)port_out_hook;
-        return (void*)code_hook;
+        switch (insn_code) {
+        case UC_X86_INS_IN:
+            return reinterpret_cast<void*>(port_in_hook);
+        case UC_X86_INS_OUT:
+            return reinterpret_cast<void*>(port_out_hook);
+        case UC_X86_INS_SYSCALL:
+        case UC_X86_INS_SYSENTER:
+            return reinterpret_cast<void*>(generic_hook_with_no_arguments);
+#if UC_API_MAJOR >= 2
+        case UC_X86_INS_CPUID:
+            return reinterpret_cast<void*>(cpuid_hook);
+        case UC_ARM64_INS_MRS:
+        case UC_ARM64_INS_MSR:
+        case UC_ARM64_INS_SYS:
+        case UC_ARM64_INS_SYSL:
+            return reinterpret_cast<void*>(arm64_sys_hook);
+#endif
+        default:
+            return (void*)code_hook;
+        }
 
     case UC_HOOK_MEM_FETCH:
     case UC_HOOK_MEM_READ:
@@ -265,6 +387,13 @@ static void* get_c_callback_for_hook_type(int hook_type, int insn_code)
     case UC_HOOK_MEM_WRITE_UNMAPPED:
         return (void*)invalid_mem_access_hook;
 
+#if UC_API_MAJOR >= 2
+    case UC_HOOK_EDGE_GENERATED:
+        return (void*)edge_generated_hook;
+    case UC_HOOK_TCG_OPCODE:
+        return (void*)tcg_opcode_hook;
+#endif // UC_API_MAJOR >= 2
+
     default:
         return nullptr;
     }
@@ -278,7 +407,7 @@ int ul_hook_add(lua_State* L)
 
     int n_args = lua_gettop(L);
 
-    auto engine_object = get_engine_struct(L, 1);
+    UCLuaEngine* engine_object = ul_toluaengine(L, 1);
     int hook_type = static_cast<int>(luaL_checkinteger(L, 2));
     /* Callback function is at position 3 */
 
@@ -340,7 +469,7 @@ int ul_hook_add(lua_State* L)
 
     if (error != UC_ERR_OK) {
         engine_object->remove_hook(hook_info);
-        return ul_crash_on_error(L, error);
+        ul_crash_on_error(L, error);
     }
 
     hook_info->set_hook_handle(hook_handle);
@@ -355,7 +484,7 @@ int ul_hook_add(lua_State* L)
 int ul_hook_del(lua_State* L)
 {
     auto hook_info = (Hook*)lua_touserdata(L, 2);
-    auto engine = get_engine_struct(L, 1);
+    UCLuaEngine* engine = ul_toluaengine(L, 1);
 
     engine->remove_hook(hook_info);
     return 0;

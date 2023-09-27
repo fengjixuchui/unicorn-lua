@@ -12,18 +12,18 @@
 #include <unicorn/unicorn.h>
 #include <unicorn/x86.h>
 
-#include "unicornlua/compat.h"
-#include "unicornlua/engine.h"
-#include "unicornlua/errors.h"
-#include "unicornlua/lua.h"
-#include "unicornlua/registers.h"
-#include "unicornlua/utils.h"
+#include "unicornlua/compat.hpp"
+#include "unicornlua/engine.hpp"
+#include "unicornlua/errors.hpp"
+#include "unicornlua/lua.hpp"
+#include "unicornlua/registers.hpp"
+#include "unicornlua/utils.hpp"
 
-const uint8_t kFP80PositiveInfinity[]
+constexpr uint8_t kFP80PositiveInfinity[]
     = { 0, 0, 0, 0, 0, 0, 0, 0x80, 0xff, 0x7f };
-const uint8_t kFP80NegativeInfinity[]
+constexpr uint8_t kFP80NegativeInfinity[]
     = { 0, 0, 0, 0, 0, 0, 0, 0x80, 0xff, 0xff };
-const uint8_t kFP80SignalingNaN[] = { 1, 0, 0, 0, 0, 0, 0, 0, 0xf0, 0x7f };
+constexpr uint8_t kFP80SignalingNaN[] = { 1, 0, 0, 0, 0, 0, 0, 0, 0xf0, 0x7f };
 
 lua_Number read_float80(const uint8_t* data)
 {
@@ -41,7 +41,7 @@ lua_Number read_float80(const uint8_t* data)
             return 0.0;
         if (sign)
             return std::ldexp(-static_cast<double>(significand), -16382);
-        return std::ldexp(significand, -16382);
+        return std::ldexp(static_cast<double>(significand), -16382);
     } else if (exponent == 0x7fff) {
         // Top two bits of the significand will tell us what kind of number this
         // is and aren't used for storing a value.
@@ -50,10 +50,8 @@ lua_Number read_float80(const uint8_t* data)
             if (significand == 0)
                 return static_cast<lua_Number>(sign ? -INFINITY : +INFINITY);
 
-// Significand is non-zero, fall through to next case.
-#ifndef _MSC_VER
-            __attribute__((fallthrough));
-#endif
+            // Significand is non-zero, fall through to next case.
+            UL_FALLTHROUGH_MARKER;
         case 1:
             /* 8087 - 80287 treat this as a signaling NaN, 80387 and later
              * treat this as an invalid operand and will explode. Compromise
@@ -151,10 +149,9 @@ void write_float80(lua_Number value, uint8_t* buffer)
         break;
     default:
         throw std::runtime_error("Unrecognized value returned from "
-                                 "std::fpclassify(). This library was"
-                                 " probably compiled on a newer standard of "
-                                 "C++ than it was written for."
-                                 " Please file a bug ticket.");
+                                 "std::fpclassify(). This library was probably "
+                                 "compiled on a newer standard of C++ than it "
+                                 "was written for. Please file a bug ticket.");
     }
 
     int exponent;
@@ -162,8 +159,8 @@ void write_float80(lua_Number value, uint8_t* buffer)
 
     if ((exponent <= -16383) || (exponent >= 16384))
         throw std::domain_error("Can't convert value outside representable "
-                                "range for 80-bit float without"
-                                " loss of precision.");
+                                "range for 80-bit float without loss of "
+                                "precision.");
 
     // The high bit of the significand is always set for normal numbers, and
     // clear for denormal numbers. This means the significand is 63 bits, not
@@ -220,7 +217,7 @@ int ul_reg_write(lua_State* L)
 
     uc_err error = uc_reg_write(engine, register_id, buffer);
     if (error != UC_ERR_OK)
-        return ul_crash_on_error(L, error);
+        ul_crash_on_error(L, error);
     return 0;
 }
 
@@ -232,7 +229,7 @@ int ul_reg_write_as(lua_State* L)
 
     uc_err error = uc_reg_write(engine, register_id, reg.data_);
     if (error != UC_ERR_OK)
-        return ul_crash_on_error(L, error);
+        ul_crash_on_error(L, error);
     return 0;
 }
 
@@ -260,7 +257,7 @@ int ul_reg_read(lua_State* L)
 
     uc_err error = uc_reg_read(engine, register_id, value_buffer);
     if (error != UC_ERR_OK)
-        return ul_crash_on_error(L, error);
+        ul_crash_on_error(L, error);
 
     lua_pushinteger(L, *reinterpret_cast<lua_Integer*>(value_buffer));
     return 1;
@@ -283,7 +280,7 @@ int ul_reg_read_as(lua_State* L)
 
     uc_err error = uc_reg_read(engine, register_id, value_buffer);
     if (error != UC_ERR_OK)
-        return ul_crash_on_error(L, error);
+        ul_crash_on_error(L, error);
 
     Register register_obj(value_buffer, read_as_type);
     register_obj.push_to_lua(L);
@@ -317,7 +314,7 @@ int ul_reg_write_batch(lua_State* L)
     uc_err error = uc_reg_write_batch(engine, register_ids.get(),
         p_values.get(), static_cast<int>(n_registers));
     if (error != UC_ERR_OK)
-        return ul_crash_on_error(L, error);
+        ul_crash_on_error(L, error);
     return 0;
 }
 
@@ -350,7 +347,7 @@ int ul_reg_read_batch(lua_State* L)
     uc_err error = uc_reg_read_batch(engine, register_ids.get(),
         value_pointers.get(), static_cast<int>(n_registers));
     if (error != UC_ERR_OK)
-        return ul_crash_on_error(L, error);
+        ul_crash_on_error(L, error);
 
     for (size_t i = 0; i < n_registers; ++i) {
         lua_pushinteger(L, *reinterpret_cast<lua_Integer*>(values[i]));
@@ -382,7 +379,7 @@ int ul_reg_read_batch_as(lua_State* L)
     uc_err error = uc_reg_read_batch(engine, register_ids.get(),
         value_pointers.get(), static_cast<int>(n_registers));
     if (error != UC_ERR_OK)
-        return ul_crash_on_error(L, error);
+        ul_crash_on_error(L, error);
 
     // Create the table we're going to return the register values in. The result
     // is a key-value mapping where the keys are the register IDs and the values

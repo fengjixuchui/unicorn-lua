@@ -8,12 +8,8 @@
 
 #include <unicorn/unicorn.h>
 
-#include "unicornlua/compat.h"
-#include "unicornlua/lua.h"
-
-#if UC_VERSION_MAJOR != 1
-#error "Library must be compiled against version 1.x of Unicorn."
-#endif
+#include "unicornlua/compat.hpp"
+#include "unicornlua/lua.hpp"
 
 /**
  * The major version number of this Lua library (first part, 1.x.x).
@@ -23,7 +19,7 @@
 /**
  * The minor version number of this Lua library (second part, x.1.x).
  */
-#define UNICORNLUA_VERSION_MINOR 1
+#define UNICORNLUA_VERSION_MINOR 2
 
 /**
  * The patch version number of this Lua library (third part, x.x.1).
